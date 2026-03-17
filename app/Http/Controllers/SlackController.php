@@ -39,8 +39,7 @@ class SlackController extends Controller
             }
 
             // Check event exists and is not bot message
-            if (isset($payload['event']) && !isset($payload['event']['subtype']))
-            {
+            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
                 // Create a unique event ID to prevent duplicates
                 $eventId = $payload['event_id'] ?? null;
                 $eventTime = $payload['event_time'] ?? null;
@@ -61,9 +60,8 @@ class SlackController extends Controller
 
                 Log::info("Slack message text", ['text' => $text]);
 
-                if (str_contains($text,'check in') || str_contains($text,'check out'))
-                {
-                    $type = str_contains($text,'check in') ? 'CHECK IN' : 'CHECK OUT';
+                if (str_contains($text, 'check in') || str_contains($text, 'check out')) {
+                    $type = str_contains($text, 'check in') ? 'CHECK IN' : 'CHECK OUT';
 
                     // Check for recent identical entries (within last 30 seconds)
                     $recentKey = "recent_{$userId}_{$type}";
@@ -100,14 +98,10 @@ class SlackController extends Controller
 
                     // Append to Google Sheet
                     $this->saveToSheet($name, $email, $type, $time);
-                }
-                else
-                {
+                } else {
                     Log::info("Message ignored - not attendance command");
                 }
-            }
-            else
-            {
+            } else {
                 Log::info("No event key found or bot message ignored");
             }
         } catch (\Exception $e) {
@@ -117,11 +111,11 @@ class SlackController extends Controller
             ]);
         }
 
-        return response()->json(['success'=>true]);
+        return response()->json(['success' => true]);
     }
 
     // Google Sheets append
-    private function saveToSheet($name,$email,$type,$time)
+    private function saveToSheet($name, $email, $type, $time)
     {
         try {
             Log::info("Connecting to Google Sheets");
@@ -131,8 +125,8 @@ class SlackController extends Controller
             $client->addScope(Sheets::SPREADSHEETS);
 
             $service = new Sheets($client);
-//            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
-            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
+//            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
             // Optional: Check for duplicates in the last 5 minutes before appending
             if ($this->isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $time)) {
@@ -140,9 +134,9 @@ class SlackController extends Controller
                 return;
             }
 
-            $values = [[$name,$email,$type,$time]];
-            $body = new \Google\Service\Sheets\ValueRange(['values'=>$values]);
-            $params = ['valueInputOption'=>'RAW'];
+            $values = [[$name, $email, $type, $time]];
+            $body = new \Google\Service\Sheets\ValueRange(['values' => $values]);
+            $params = ['valueInputOption' => 'RAW'];
 
             $service->spreadsheets_values->append(
                 $spreadsheetId,
@@ -208,24 +202,23 @@ class SlackController extends Controller
         $token = env('SLACK_BOT_TOKEN');
 
         $response = file_get_contents(
-            "https://slack.com/api/users.info?user=".$userId,
+            "https://slack.com/api/users.info?user=" . $userId,
             false,
             stream_context_create([
-                "http"=>[
-                    "header"=>"Authorization: Bearer ".$token
+                "http" => [
+                    "header" => "Authorization: Bearer " . $token
                 ]
             ])
         );
 
-        $data = json_decode($response,true);
+        $data = json_decode($response, true);
 
-        $userData = ['name'=>'Unknown','email'=>'Unknown'];
+        $userData = ['name' => 'Unknown', 'email' => 'Unknown'];
 
-        if(isset($data['user']))
-        {
+        if (isset($data['user'])) {
             $userData = [
-                'name'=>$data['user']['profile']['real_name'] ?? 'Unknown',
-                'email'=>$data['user']['profile']['email'] ?? 'Unknown'
+                'name' => $data['user']['profile']['real_name'] ?? 'Unknown',
+                'email' => $data['user']['profile']['email'] ?? 'Unknown'
             ];
 
             // Cache for 1 hour
@@ -233,5 +226,54 @@ class SlackController extends Controller
         }
 
         return $userData;
+    }
+
+    public function fetchOldMessages()
+    {
+        ini_set('max_execution_time', 300);
+
+        $token = env('SLACK_BOT_TOKEN');
+        $channelId = env('SLACK_CHANNEL_ID');
+
+        $url = "https://slack.com/api/conversations.history?channel=" . $channelId . "&limit=200";
+
+        $response = file_get_contents(
+            $url,
+            false,
+            stream_context_create([
+                "http" => [
+                    "header" => "Authorization: Bearer " . $token
+                ]
+            ])
+        );
+
+        $data = json_decode($response, true);
+
+        if (!isset($data['messages'])) {
+            return "No messages found";
+        }
+
+        foreach ($data['messages'] as $message) {
+            if (!isset($message['user']) || !isset($message['text'])) {
+                continue;
+            }
+
+            $text = strtolower($message['text']);
+
+            if (str_contains($text, 'check in') || str_contains($text, 'check out')) {
+                $type = str_contains($text, 'check in') ? 'CHECK IN' : 'CHECK OUT';
+
+                $userData = $this->getSlackUserInfo($message['user']);
+
+                $name = $userData['name'];
+                $email = $userData['email'];
+
+                $time = date('Y-m-d H:i:s', $message['ts']);
+
+                $this->saveToSheet($name, $email, $type, $time);
+            }
+        }
+
+        return "Old messages imported";
     }
 }
