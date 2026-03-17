@@ -231,49 +231,111 @@ class SlackController extends Controller
     public function fetchOldMessages()
     {
         ini_set('max_execution_time', 300);
-
         $token = env('SLACK_BOT_TOKEN');
         $channelId = env('SLACK_CHANNEL_ID');
 
-        $url = "https://slack.com/api/conversations.history?channel=" . $channelId . "&limit=200";
+        $cacheKey = 'last_imported_message_ts';
+        $lastImportedTs = Cache::get($cacheKey, 0);
+
+        $url = "https://slack.com/api/conversations.history?channel=".$channelId."&limit=200";
 
         $response = file_get_contents(
             $url,
             false,
             stream_context_create([
-                "http" => [
-                    "header" => "Authorization: Bearer " . $token
+                "http"=>[
+                    "header"=>"Authorization: Bearer ".$token
                 ]
             ])
         );
 
-        $data = json_decode($response, true);
+        $data = json_decode($response,true);
 
-        if (!isset($data['messages'])) {
+        if(!isset($data['messages'])){
             return "No messages found";
         }
 
-        foreach ($data['messages'] as $message) {
-            if (!isset($message['user']) || !isset($message['text'])) {
+        $newestTs = $lastImportedTs;
+        $importedCount = 0;
+
+        // Process messages from oldest to newest
+        foreach(array_reverse($data['messages']) as $message)
+        {
+            if(!isset($message['user']) || !isset($message['text'])){
+                continue;
+            }
+
+            $messageTs = (float)$message['ts']; // Convert to float for comparison
+
+            // Skip messages older than or equal to last import
+            if ($messageTs <= $lastImportedTs) {
                 continue;
             }
 
             $text = strtolower($message['text']);
 
-            if (str_contains($text, 'check in') || str_contains($text, 'check out')) {
-                $type = str_contains($text, 'check in') ? 'CHECK IN' : 'CHECK OUT';
+            if(str_contains($text,'check in') || str_contains($text,'check out'))
+            {
+                $type = str_contains($text,'check in') ? 'CHECK IN' : 'CHECK OUT';
 
                 $userData = $this->getSlackUserInfo($message['user']);
 
                 $name = $userData['name'];
                 $email = $userData['email'];
 
-                $time = date('Y-m-d H:i:s', $message['ts']);
+                // Convert Slack timestamp (UTC) to GMT+5
+                $utcTime = \Carbon\Carbon::createFromTimestamp($message['ts']);
+                $gmt5Time = $utcTime->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
 
-                $this->saveToSheet($name, $email, $type, $time);
+                $this->saveToSheet($name, $email, $type, $gmt5Time);
+
+                $importedCount++;
+
+                // Track the newest timestamp
+                if ($messageTs > $newestTs) {
+                    $newestTs = $messageTs;
+                }
             }
         }
 
-        return "Old messages imported";
+        // Update the last imported timestamp
+        if ($newestTs > $lastImportedTs) {
+            Cache::put($cacheKey, $newestTs, now()->addYear());
+        }
+
+        $gmt5Now = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+        return "Import complete: {$importedCount} new messages imported (GMT+5 as of {$gmt5Now})";
     }
+    public function testMessage()
+    {
+        return $this->sendMessageToSlack("Hello from Laravel");
+    }
+
+    public function sendMessageToSlack($message)
+    {
+        $token = env('SLACK_BOT_TOKEN');
+        $channel = env('SLACK_CHANNEL_ID');
+
+        $payload = [
+            'channel' => $channel,
+            'text' => $message
+        ];
+
+        $ch = curl_init("https://slack.com/api/chat.postMessage");
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Authorization: Bearer {$token}",
+            "Content-Type: application/json"
+        ]);
+
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        return "Message Sent To slack";
+    }
+
 }

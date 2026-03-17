@@ -8,3 +8,6 @@ Route::get('/', function () {
 });
 
 Route::get('/slack/fetch-old', [SlackController::class,'fetchOldMessages']);
+
+Route::get('/send-slack', [SlackController::class, 'testMessage']);
+
