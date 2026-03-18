@@ -10,7 +10,110 @@ use Google\Service\Sheets;
 
 class SlackController extends Controller
 {
-
+    // Main attendance webhook
+//    public function attendance(Request $request)
+//    {
+//        Log::info("Slack request received", $request->all());
+//
+//        $payload = $request->all();
+//
+//        try {
+//            if (isset($payload['type']) && $payload['type'] === 'url_verification') {
+//                return response($payload['challenge'], 200)
+//                    ->header('Content-Type', 'text/plain');
+//            }
+//            // Check for Slack retry headers
+//            $retryCount = $request->header('X-Slack-Retry-Num');
+//            $retryReason = $request->header('X-Slack-Retry-Reason');
+//
+//            if ($retryCount !== null) {
+//                Log::info("Slack retry detected", [
+//                    'retry_count' => $retryCount,
+//                    'retry_reason' => $retryReason
+//                ]);
+//
+//                // If it's a retry, we might want to check if we already processed this
+//                if ($retryCount > 0) {
+//                    return response()->json(['success' => true, 'message' => 'Retry ignored']);
+//                }
+//            }
+//
+//            // Check event exists and is not bot message
+//            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
+//                // Create a unique event ID to prevent duplicates
+//                $eventId = $payload['event_id'] ?? null;
+//                $eventTime = $payload['event_time'] ?? null;
+//                $userId = $payload['event']['user'] ?? null;
+//                $text = strtolower($payload['event']['text'] ?? '');
+//
+//                // Create a unique key for this event
+//                $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
+//
+//                // Check if we've already processed this event (within last 5 minutes)
+//                if (Cache::has($uniqueKey)) {
+//                    Log::info("Duplicate event detected, skipping", ['event_id' => $eventId]);
+//                    return response()->json(['success' => true, 'message' => 'Duplicate ignored']);
+//                }
+//
+//                // Store in cache for 5 minutes to prevent duplicates
+//                Cache::put($uniqueKey, true, now()->addMinutes(5));
+//
+//                Log::info("Slack message text", ['text' => $text]);
+//
+//                if (str_contains($text, 'check in') || str_contains($text, 'check out')) {
+//                    $type = str_contains($text, 'check in') ? 'CHECK IN' : 'CHECK OUT';
+//
+//                    // Check for recent identical entries (within last 30 seconds)
+//                    $recentKey = "recent_{$userId}_{$type}";
+//                    $lastProcessed = Cache::get($recentKey);
+//
+//                    if ($lastProcessed && (time() - $lastProcessed) < 30) {
+//                        Log::info("Skipping - too soon since last similar entry", [
+//                            'user_id' => $userId,
+//                            'type' => $type,
+//                            'seconds_since_last' => time() - $lastProcessed
+//                        ]);
+//                        return response()->json(['success' => true, 'message' => 'Rate limited']);
+//                    }
+//
+//                    // Update last processed time
+//                    Cache::put($recentKey, time(), now()->addMinutes(1));
+//
+//                    // Fetch proper user name & email from Slack API
+//                    $userData = $this->getSlackUserInfo($userId);
+//
+//                    $name = $userData['name'];
+//                    $email = $userData['email'];
+//
+//                    // Time in GMT+5
+//                    $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+//
+//                    Log::info("Attendance detected", [
+//                        'name' => $name,
+//                        'email' => $email,
+//                        'type' => $type,
+//                        'time' => $time,
+//                        'event_id' => $eventId
+//                    ]);
+//
+//                    // Append to Google Sheet
+//                    $this->saveToSheet($name, $email, $type, $time);
+//                } else {
+//                    // Non-attendance messages (abuse/general)
+//                    $this->saveAbuseMessage($userId, $text, $eventTime ?? now());
+//                }
+//            } else {
+//                Log::info("No event key found or bot message ignored");
+//            }
+//        } catch (\Exception $e) {
+//            Log::error("Slack attendance error", [
+//                'message' => $e->getMessage(),
+//                'trace' => $e->getTraceAsString()
+//            ]);
+//        }
+//
+//        return response()->json(['success' => true]);
+//    }
     public function attendance(Request $request)
     {
         Log::info("Slack request received", $request->all());
@@ -130,8 +233,8 @@ class SlackController extends Controller
             $client->addScope(Sheets::SPREADSHEETS);
 
             $service = new Sheets($client);
-            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
-//            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+//            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
 
             $values = [[$name, $email, $text, $timeFormatted]];
@@ -162,8 +265,8 @@ class SlackController extends Controller
             $client->addScope(Sheets::SPREADSHEETS);
 
             $service = new Sheets($client);
-            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
-//            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+//            $spreadsheetId = "1r8spn7LWA5247CPJpN5Ke9keJDwhvu44MS9SbitelvM";
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
             // Optional: Check for duplicates in the last 5 minutes before appending
             if ($this->isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $time)) {
@@ -188,50 +291,43 @@ class SlackController extends Controller
         }
     }
 
-
-    private function isDuplicateInSheet($service, $spreadsheetId, array $columns, $time, $range)
+    // Optional: Check for duplicates in the sheet
+    private function isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $time)
     {
         try {
-            // Fetch sheet values
-            $response = $service->spreadsheets_values->get($spreadsheetId, $range);
+            // Get recent entries (last 10 rows)
+            $response = $service->spreadsheets_values->get($spreadsheetId, 'Sheet1!A:D');
             $rows = $response->getValues();
 
             if (empty($rows)) {
                 return false;
             }
 
-            // Check last 10 rows
+            // Get last 10 rows
             $recentRows = array_slice($rows, -10);
 
+            // Parse the time to compare (ignoring seconds maybe)
             $newTime = \Carbon\Carbon::parse($time);
 
             foreach ($recentRows as $row) {
-                $match = true;
+                if (count($row) >= 4) {
+                    $rowTime = \Carbon\Carbon::parse($row[3]);
 
-                // Compare each column passed in $columns array
-                foreach ($columns as $index => $value) {
-                    if (!isset($row[$index]) || $row[$index] != $value) {
-                        $match = false;
-                        break;
-                    }
-                }
-
-                if ($match) {
-                    // Time check if last column exists
-                    $rowTime = isset($row[count($columns)]) ? \Carbon\Carbon::parse($row[count($columns)]) : null;
-
-                    if ($rowTime && abs($newTime->diffInSeconds($rowTime)) < 30) {
+                    // If same name, email, type and within 30 seconds
+                    if ($row[0] == $name &&
+                        $row[1] == $email &&
+                        $row[2] == $type &&
+                        abs($newTime->diffInSeconds($rowTime)) < 30) {
                         return true;
                     }
                 }
             }
         } catch (\Exception $e) {
-            Log::error("Error checking duplicates in sheet {$spreadsheetId}", ['error' => $e->getMessage()]);
+            Log::error("Error checking duplicates in sheet", ['error' => $e->getMessage()]);
         }
 
         return false;
     }
-
 
     // Fetch Slack user info by ID
     private function getSlackUserInfo($userId)
@@ -272,88 +368,9 @@ class SlackController extends Controller
         return $userData;
     }
 
-//    public function fetchOldMessages()
-//    {
-//        ini_set('max_execution_time', 300);
-//        $token = env('SLACK_BOT_TOKEN');
-//        $channelId = env('SLACK_CHANNEL_ID');
-//
-//        $cacheKey = 'last_imported_message_ts';
-//        $lastImportedTs = Cache::get($cacheKey, 0);
-//
-//        $url = "https://slack.com/api/conversations.history?channel=".$channelId."&limit=200";
-//
-//        $response = file_get_contents(
-//            $url,
-//            false,
-//            stream_context_create([
-//                "http"=>[
-//                    "header"=>"Authorization: Bearer ".$token
-//                ]
-//            ])
-//        );
-//
-//        $data = json_decode($response,true);
-//
-//        if(!isset($data['messages'])){
-//            return "No messages found";
-//        }
-//
-//        $newestTs = $lastImportedTs;
-//        $importedCount = 0;
-//
-//        // Process messages from oldest to newest
-//        foreach(array_reverse($data['messages']) as $message)
-//        {
-//            if(!isset($message['user']) || !isset($message['text'])){
-//                continue;
-//            }
-//
-//            $messageTs = (float)$message['ts']; // Convert to float for comparison
-//
-//            // Skip messages older than or equal to last import
-//            if ($messageTs <= $lastImportedTs) {
-//                continue;
-//            }
-//
-//            $text = strtolower($message['text']);
-//
-//            if(str_contains($text,'check in') || str_contains($text,'check out'))
-//            {
-//                $type = str_contains($text,'check in') ? 'CHECK IN' : 'CHECK OUT';
-//
-//                $userData = $this->getSlackUserInfo($message['user']);
-//
-//                $name = $userData['name'];
-//                $email = $userData['email'];
-//
-//                // Convert Slack timestamp (UTC) to GMT+5
-//                $utcTime = \Carbon\Carbon::createFromTimestamp($message['ts']);
-//                $gmt5Time = $utcTime->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
-//
-//                $this->saveToSheet($name, $email, $type, $gmt5Time);
-//
-//                $importedCount++;
-//
-//                // Track the newest timestamp
-//                if ($messageTs > $newestTs) {
-//                    $newestTs = $messageTs;
-//                }
-//            }
-//        }
-//
-//        // Update the last imported timestamp
-//        if ($newestTs > $lastImportedTs) {
-//            Cache::put($cacheKey, $newestTs, now()->addYear());
-//        }
-//
-//        $gmt5Now = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
-//        return "Import complete: {$importedCount} new messages imported (GMT+5 as of {$gmt5Now})";
-//    }
     public function fetchOldMessages()
     {
         ini_set('max_execution_time', 300);
-
         $token = env('SLACK_BOT_TOKEN');
         $channelId = env('SLACK_CHANNEL_ID');
 
@@ -395,18 +412,14 @@ class SlackController extends Controller
                 continue;
             }
 
-            $originalText = $message['text'];
-            $text = strtolower($originalText);
-            $text = str_replace([' ', '-'], '', $text); // Ignore spaces/hyphens
+            $text = strtolower($message['text']);
 
-            $checkIn = str_contains($text, 'checkin');
-            $checkOut = str_contains($text, 'checkout');
-
-            if ($checkIn xor $checkOut) {
-                // Attendance message
-                $type = $checkIn ? 'CHECK IN' : 'CHECK OUT';
+            if(str_contains($text,'check in') || str_contains($text,'check out'))
+            {
+                $type = str_contains($text,'check in') ? 'CHECK IN' : 'CHECK OUT';
 
                 $userData = $this->getSlackUserInfo($message['user']);
+
                 $name = $userData['name'];
                 $email = $userData['email'];
 
@@ -417,14 +430,11 @@ class SlackController extends Controller
                 $this->saveToSheet($name, $email, $type, $gmt5Time);
 
                 $importedCount++;
-            } else {
-                // Abuse message
-                $this->saveAbuseMessage($message['user'], $originalText, $messageTs ?? now());
-            }
 
-            // Track the newest timestamp
-            if ($messageTs > $newestTs) {
-                $newestTs = $messageTs;
+                // Track the newest timestamp
+                if ($messageTs > $newestTs) {
+                    $newestTs = $messageTs;
+                }
             }
         }
 
@@ -436,7 +446,6 @@ class SlackController extends Controller
         $gmt5Now = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
         return "Import complete: {$importedCount} new messages imported (GMT+5 as of {$gmt5Now})";
     }
-
     public function testMessage()
     {
         return $this->sendMessageToSlack("Hello from Laravel");
