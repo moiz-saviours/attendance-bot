@@ -29,13 +29,23 @@ class SlackController extends Controller
                 return response()->json(['success' => true, 'message' => 'Retry ignored']);
             }
 
-            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
-
+//            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
+            if (isset($payload['event'])) {
                 $eventId = $payload['event_id'] ?? null;
                 $eventTime = $payload['event_time'] ?? null;
                 $userId = $payload['event']['user'] ?? null;
                 $originalText = $payload['event']['text'] ?? '';
                 $text = strtolower($originalText);
+
+                if (!$userId) {
+                    return response()->json(['success'=>true]);
+                }
+
+                $attachment = '';
+
+                if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
+                    $attachment = $payload['event']['files'][0]['url_private'] ?? '';
+                }
 
                 // Unique key to prevent duplicates
                 $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
@@ -75,7 +85,7 @@ class SlackController extends Controller
                         $textToSave = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $textToSave);
                     }
 
-                    $this->saveToSheet($name, $email, $type, $textToSave, $time);
+                    $this->saveToSheet($name, $email, $type, $textToSave, $attachment ,$time);
 
                     Log::info("Attendance detected", [
                         'name' => $name,
@@ -96,9 +106,9 @@ class SlackController extends Controller
                         $textToSave = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $textToSave);
                     }
 
-                    $this->saveToSheet($name, $email, 'MESSAGE', $textToSave, $time);
+                    $this->saveToSheet($name, $email, 'MESSAGE', $textToSave, $attachment, $time);
 
-                    Log::info("Message saved with mentions converted", [
+                    Log::info("Message detected", [
                         'name' => $name,
                         'email' => $email,
                         'message' => $textToSave,
@@ -121,7 +131,7 @@ class SlackController extends Controller
         return response()->json(['success'=>true]);
     }
 
-    private function saveToSheet($name, $email, $type, $message, $time)
+    private function saveToSheet($name, $email, $type, $message, $attachment, $time)
     {
         try {
             Log::info("Connecting to Google Sheets");
@@ -138,13 +148,13 @@ class SlackController extends Controller
                 return;
             }
 
-            $values = [[$name, $email, $type, $message, $time]];
+            $values = [[$name, $email, $type, $message,$attachment, $time]];
             $body = new \Google\Service\Sheets\ValueRange(['values'=>$values]);
             $params = ['valueInputOption'=>'RAW'];
 
             $service->spreadsheets_values->append(
                 $spreadsheetId,
-                'Sheet1!A:E',
+                'Sheet1!A:F',
                 $body,
                 $params
             );
@@ -158,7 +168,7 @@ class SlackController extends Controller
     private function isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $message, $time)
     {
         try {
-            $response = $service->spreadsheets_values->get($spreadsheetId, 'Sheet1!A:E');
+            $response = $service->spreadsheets_values->get($spreadsheetId, 'Sheet1!A:F');
             $rows = $response->getValues();
             if (empty($rows)) return false;
 
@@ -166,8 +176,8 @@ class SlackController extends Controller
             $newTime = \Carbon\Carbon::parse($time);
 
             foreach ($recentRows as $row) {
-                if (count($row) >= 5) {
-                    $rowTime = \Carbon\Carbon::parse($row[4]);
+                if (count($row) >= 6) {
+                    $rowTime = \Carbon\Carbon::parse($row[5]);
                     if ($row[0] == $name && $row[1] == $email && $row[2] == $type &&
                         $row[3] == $message && abs($newTime->diffInSeconds($rowTime)) < 30) {
                         return true;
@@ -210,7 +220,7 @@ class SlackController extends Controller
 // Show form
     public function showMessageForm()
     {
-        return view('slack-message'); // resources/views/slack-message.blade.php
+        return view('slack-message');
     }
 
     public function sendMessageFromForm(Request $request)
@@ -231,7 +241,9 @@ class SlackController extends Controller
         // 2️⃣ Save to Google Sheet with Slack name
         $type = 'MESSAGE';
         $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
-        $this->saveToSheet($slackName, $projectUser->email, $type, $message, $time);
+        $attachment = '';
+
+        $this->saveToSheet($slackName, $projectUser->email, $type,$message, $attachment,$time);
 
         return back()->with('success', 'Message sent to Slack and Sheet!');
     }
@@ -243,7 +255,7 @@ class SlackController extends Controller
         $payload = [
             'channel' => $channel,
             'text' => $message,
-            'username' => $username, // Slack me dikhega
+            'username' => $username,
             'icon_emoji' => ':bust_in_silhouette:'
         ];
 
