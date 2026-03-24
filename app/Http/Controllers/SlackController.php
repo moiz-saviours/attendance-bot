@@ -31,94 +31,53 @@ class SlackController extends Controller
 
 //            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
             if (isset($payload['event'])) {
+
                 $eventId = $payload['event_id'] ?? null;
                 $eventTime = $payload['event_time'] ?? null;
                 $userId = $payload['event']['user'] ?? null;
                 $originalText = $payload['event']['text'] ?? '';
-                $text = strtolower($originalText);
 
                 if (!$userId) {
                     return response()->json(['success'=>true]);
                 }
 
                 $attachment = '';
-
                 if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
-                    $attachment = $payload['event']['files'][0]['url_private'] ?? '';
+                    $urls = [];
+                    foreach ($payload['event']['files'] as $file) {
+                        $urls[] = $file['url_private'] ?? '';
+                    }
+                    $attachment = implode("\n" , $urls);
                 }
 
-                // Unique key to prevent duplicates
+                // Duplicate check
                 $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
                 if (Cache::has($uniqueKey)) {
                     Log::info("Duplicate event detected, skipping", ['event_id' => $eventId]);
-                    return response()->json(['success' => true, 'message' => 'Duplicate ignored']);
+                    return response()->json(['success' => true]);
                 }
                 Cache::put($uniqueKey, true, now()->addMinutes(5));
 
+                // User info
                 $userData = $this->getSlackUserInfo($userId);
                 $name = $userData['name'];
                 $email = $userData['email'];
                 $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
 
-                if (str_contains($text,'check in') || str_contains($text,'check out')) {
-                    $type = str_contains($text,'check in') ? 'MESSAGE' : 'MESSAGE';
+                $textToSave = $this->convertMentionsToNames($originalText);
 
-                    // Rate limit within 30 seconds
-                    $recentKey = "recent_{$userId}_{$type}";
-                    $lastProcessed = Cache::get($recentKey);
-                    if ($lastProcessed && (time() - $lastProcessed) < 30) {
-                        Log::info("Skipping - too soon since last similar entry", [
-                            'user_id' => $userId,
-                            'type' => $type,
-                            'seconds_since_last' => time() - $lastProcessed
-                        ]);
-                        return response()->json(['success' => true, 'message' => 'Rate limited']);
-                    }
-                    Cache::put($recentKey, time(), now()->addMinutes(1));
+                $type = 'MESSAGE';
 
-                    // Convert mentions to real names
-                    $textToSave = $originalText;
-                    preg_match_all('/<@([A-Z0-9]+)>/', $textToSave, $matches);
-                    foreach($matches[1] as $mentionedUserId) {
-                        $mentionedUser = $this->getSlackUserInfo($mentionedUserId);
-                        $mentionedName = $mentionedUser['name'] ?? 'Unknown';
-                        $textToSave = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $textToSave);
-                    }
+                // Save
+                $this->saveToSheet($name, $email, $type, $textToSave, $attachment, $time);
 
-                    $this->saveToSheet($name, $email, $type, $textToSave, $attachment ,$time);
-
-                    Log::info("Attendance detected", [
-                        'name' => $name,
-                        'email' => $email,
-                        'type' => $type,
-                        'message' => $textToSave,
-                        'time' => $time,
-                        'event_id' => $eventId
-                    ]);
-
-                } else {
-                    // Normal message with mentions conversion
-                    $textToSave = $originalText;
-                    preg_match_all('/<@([A-Z0-9]+)>/', $textToSave, $matches);
-                    foreach($matches[1] as $mentionedUserId) {
-                        $mentionedUser = $this->getSlackUserInfo($mentionedUserId);
-                        $mentionedName = $mentionedUser['name'] ?? 'Unknown';
-                        $textToSave = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $textToSave);
-                    }
-
-                    $this->saveToSheet($name, $email, 'MESSAGE', $textToSave, $attachment, $time);
-
-                    Log::info("Message detected", [
-                        'name' => $name,
-                        'email' => $email,
-                        'message' => $textToSave,
-                        'time' => $time,
-                        'event_id' => $eventId
-                    ]);
-                }
-
-            } else {
-                Log::info("No event key found or bot message ignored");
+                Log::info("Message detected", [
+                    'name' => $name,
+                    'email' => $email,
+                    'message' => $textToSave,
+                    'time' => $time,
+                    'event_id' => $eventId
+                ]);
             }
 
         } catch (\Exception $e) {
@@ -188,6 +147,18 @@ class SlackController extends Controller
             Log::error("Error checking duplicates in sheet", ['error' => $e->getMessage()]);
         }
         return false;
+    }
+    private function convertMentionsToNames($text)
+    {
+        preg_match_all('/<@([A-Z0-9]+)>/', $text, $matches);
+
+        foreach ($matches[1] as $mentionedUserId) {
+            $mentionedUser = $this->getSlackUserInfo($mentionedUserId);
+            $mentionedName = $mentionedUser['name'] ?? 'Unknown';
+            $text = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $text);
+        }
+
+        return $text;
     }
 
     private function getSlackUserInfo($userId)
