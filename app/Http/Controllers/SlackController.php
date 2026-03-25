@@ -68,8 +68,12 @@ class SlackController extends Controller
 
                 $type = 'MESSAGE';
 
+                $check = $this->checkAbusive($textToSave);
+
+                $textToSave = $check['message'];   // normal message
+                $abusiveText   = $check['abusive'];
                 // Save
-                $this->saveToSheet($name, $email, $type, $textToSave, $attachment, $time);
+                $this->saveToSheet($name, $email, $type, $textToSave, $abusiveText, $attachment, $time);
 
                 Log::info("Message detected", [
                     'name' => $name,
@@ -90,7 +94,7 @@ class SlackController extends Controller
         return response()->json(['success'=>true]);
     }
 
-    private function saveToSheet($name, $email, $type, $message, $attachment, $time)
+    private function saveToSheet($name, $email, $type, $message, $abusive, $attachment, $time)
     {
         try {
             Log::info("Connecting to Google Sheets");
@@ -102,18 +106,13 @@ class SlackController extends Controller
             $service = new Sheets($client);
             $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
-            if ($this->isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $message, $time)) {
-                Log::info("Duplicate entry detected in sheet, skipping append");
-                return;
-            }
-
-            $values = [[$name, $email, $type, $message,$attachment, $time]];
+            $values = [[$name, $email, $type, $message, $abusive, $attachment, $time]];
             $body = new \Google\Service\Sheets\ValueRange(['values'=>$values]);
             $params = ['valueInputOption'=>'RAW'];
 
             $service->spreadsheets_values->append(
                 $spreadsheetId,
-                'Sheet1!A:F',
+                'Sheet1!A:G',
                 $body,
                 $params
             );
@@ -123,30 +122,55 @@ class SlackController extends Controller
             Log::error("Google Sheet write failed", ['error' => $e->getMessage()]);
         }
     }
-
-    private function isDuplicateInSheet($service, $spreadsheetId, $name, $email, $type, $message, $time)
+    private function checkAbusive($message)
     {
+        Log::info("Checking abusive for message", ['message' => $message]);
+
         try {
-            $response = $service->spreadsheets_values->get($spreadsheetId, 'Sheet1!A:F');
-            $rows = $response->getValues();
-            if (empty($rows)) return false;
+            $user = env('NEUTRINO_USER');
+            $apiKey = env('NEUTRINO_PASS');
 
-            $recentRows = array_slice($rows, -10);
-            $newTime = \Carbon\Carbon::parse($time);
+            $data = http_build_query([
+                'user-id' => $user,
+                'api-key' => $apiKey,
+                'content' => $message
+            ]);
 
-            foreach ($recentRows as $row) {
-                if (count($row) >= 6) {
-                    $rowTime = \Carbon\Carbon::parse($row[5]);
-                    if ($row[0] == $name && $row[1] == $email && $row[2] == $type &&
-                        $row[3] == $message && abs($newTime->diffInSeconds($rowTime)) < 30) {
-                        return true;
-                    }
-                }
+            $options = [
+                'http' => [
+                    'header'  => "Content-type: application/x-www-form-urlencoded",
+                    'method'  => 'POST',
+                    'content' => $data,
+                ]
+            ];
+
+            $context  = stream_context_create($options);
+            $response = file_get_contents("https://neutrinoapi.net/bad-word-filter", false, $context);
+
+
+            $result = json_decode($response, true);
+
+
+            if (!empty($result['is-bad'])) {
+                Log::info("Abusive detected", ['bad_words' => $result['bad-words-list'] ?? []]);
+                return [
+                    'is_abusive' => true,
+                    'abusive' => $message,
+                    'message' => ''
+                ];
             }
+
+            Log::info("Message is clean", ['message' => $message]);
+
         } catch (\Exception $e) {
-            Log::error("Error checking duplicates in sheet", ['error' => $e->getMessage()]);
+            Log::error("Abusive API error", ['error' => $e->getMessage()]);
         }
-        return false;
+
+        return [
+            'is_abusive' => false,
+            'abusive' => '',
+            'message' => $message
+        ];
     }
     private function convertMentionsToNames($text)
     {
@@ -208,13 +232,17 @@ class SlackController extends Controller
         $slackName = $slackUser['name'] ?? $projectUser->name;
 
         $this->sendMessageToSlack($message, $slackName);
+        // 2️⃣ Check for abusive content using Neutrino API
 
-        // 2️⃣ Save to Google Sheet with Slack name
         $type = 'MESSAGE';
+        $check = $this->checkAbusive($message);
+        $messageToSave = $check['message'];
+        $abusiveText = $check['abusive'];
+
         $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
         $attachment = '';
 
-        $this->saveToSheet($slackName, $projectUser->email, $type,$message, $attachment,$time);
+        $this->saveToSheet($slackName, $projectUser->email, $type,$messageToSave, $abusiveText, $attachment,$time);
 
         return back()->with('success', 'Message sent to Slack and Sheet!');
     }
