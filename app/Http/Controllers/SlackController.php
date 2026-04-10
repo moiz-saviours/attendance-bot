@@ -456,7 +456,7 @@ class SlackController extends Controller
 
             $sheetName = "Attendance";
 
-            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:H");
+            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:G");
             $rows = $response->getValues() ?? [];
 
             $isCheckout = str_contains($text, 'out');
@@ -466,64 +466,69 @@ class SlackController extends Controller
                 if ($index === 0) continue;
 
                 $rowEmail = $row[1] ?? '';
-                $status   = $row[4] ?? '';
+                $checkInTime = $row[2] ?? '';
+                $checkOutTime = $row[3] ?? '';
 
-                // =========================
-                // 🔥 CHECKOUT (OPEN SESSION)
-                // =========================
-                if ($isCheckout) {
+                if (!$rowEmail || !$checkInTime) continue;
 
-                    if ($rowEmail === $email && strtoupper($status) === 'OPEN') {
+                // 🔥 Only rows without checkout
+                if ($rowEmail === $email && empty($checkOutTime)) {
 
-                        $checkInTime = ltrim($row[2], " '");
-                        $timeClean   = ltrim($time, " '");
+                    $checkInTime = ltrim($checkInTime, " '");
+                    $timeClean   = ltrim($time, " '");
 
-                        $checkIn = \Carbon\Carbon::parse($checkInTime, 'Asia/Karachi');
-                        $checkOut = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
+                    $checkIn = \Carbon\Carbon::parse($checkInTime, 'Asia/Karachi');
+                    $current = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
 
-                        $totalMinutes = $checkIn->diffInMinutes($checkOut);
+                    // 🔥 15 HOURS RULE
+                    $diffHours = $checkIn->diffInHours($current);
 
-                        $hours = floor($totalMinutes / 60);
-                        $minutes = $totalMinutes % 60;
+                    if ($diffHours <= 15) {
 
-                        $totalHours = "{$hours}h {$minutes}m";
+                        if ($isCheckout) {
 
-                        $rowIndex = $index + 1;
+                            $totalMinutes = $checkIn->diffInMinutes($current);
 
-                        $values = [[
-                            $row[0],        // Name
-                            $row[1],        // Email
-                            $row[2],        // Check In
-                            $timeClean,     // Check Out
-                            'CLOSED',       // Status
-                            $row[5] ?? '',  // Time
-                            $totalHours     // Total
-                        ]];
+                            $hours = floor($totalMinutes / 60);
+                            $minutes = $totalMinutes % 60;
 
-                        $body = new \Google\Service\Sheets\ValueRange([
-                            'values' => $values
-                        ]);
+                            $totalHours = "{$hours}h {$minutes}m";
 
-                        $service->spreadsheets_values->update(
-                            $spreadsheetId,
-                            "$sheetName!A{$rowIndex}:H{$rowIndex}",
-                            $body,
-                            ['valueInputOption' => 'RAW']
-                        );
+                            $rowIndex = $index + 1;
 
-                        Log::info("✅ Checkout updated", [
-                            'email' => $email,
-                            'hours' => $totalHours
-                        ]);
+                            $values = [[
+                                $row[0],
+                                $row[1],
+                                $row[2],
+                                $timeClean,
+                                $row[4] ?? '',
+                                $timeClean,
+                                $totalHours
+                            ]];
 
-                        return;
+                            $body = new \Google\Service\Sheets\ValueRange([
+                                'values' => $values
+                            ]);
+
+                            $service->spreadsheets_values->update(
+                                $spreadsheetId,
+                                "$sheetName!A{$rowIndex}:G{$rowIndex}",
+                                $body,
+                                ['valueInputOption' => 'RAW']
+                            );
+
+                            Log::info("✅ Checkout updated (within 15 hours)", [
+                                'email' => $email,
+                                'hours' => $totalHours
+                            ]);
+
+                            return;
+                        }
                     }
                 }
             }
 
-            // =========================
-            // 🔥 CHECKIN INSERT
-            // =========================
+            // 🔥 CHECK-IN (NEW SHIFT)
             if (str_contains($text, 'in')) {
 
                 $values = [[
@@ -531,7 +536,7 @@ class SlackController extends Controller
                     $email,
                     $time,
                     '',
-                    'OPEN',
+                    '',
                     $time,
                     ''
                 ]];
@@ -542,12 +547,12 @@ class SlackController extends Controller
 
                 $service->spreadsheets_values->append(
                     $spreadsheetId,
-                    "$sheetName!A:H",
+                    "$sheetName!A:G",
                     $body,
                     ['valueInputOption' => 'RAW']
                 );
 
-                Log::info("✅ Checkin inserted", [
+                Log::info("✅ New shift (check-in)", [
                     'email' => $email,
                     'time' => $time
                 ]);
