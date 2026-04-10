@@ -8,6 +8,12 @@ use Illuminate\Support\Facades\Cache;
 use Google\Client;
 use Google\Service\Sheets;
 
+
+//All Apis Uses
+//for fetch abusive Message
+//https://neutrinoapi.net/bad-word-filter
+
+
 class SlackController extends Controller
 {
     public function attendance(Request $request)
@@ -66,22 +72,62 @@ class SlackController extends Controller
 
                 $textToSave = $this->convertMentionsToNames($originalText);
 
-                $type = 'MESSAGE';
+                $textLower = strtolower($textToSave);
 
-                $check = $this->checkAbusive($textToSave);
+                $isCheckin =
+                    str_contains($textLower, 'checkin') ||
+                    str_contains($textLower, 'check in') ||
+                    str_contains($textLower, 'check-in');
 
-                $textToSave = $check['message'];   // normal message
-                $abusiveText   = $check['abusive'];
-                // Save
-                $this->saveToSheet($name, $email, $type, $textToSave, $abusiveText, $attachment, $time);
+                $isCheckout =
+                    str_contains($textLower, 'checkout') ||
+                    str_contains($textLower, 'check out') ||
+                    str_contains($textLower, 'check-out');
 
-                Log::info("Message detected", [
-                    'name' => $name,
-                    'email' => $email,
-                    'message' => $textToSave,
-                    'time' => $time,
-                    'event_id' => $eventId
-                ]);
+                if ($isCheckin || $isCheckout) {
+
+                    Log::info("🔥 ATTENDANCE TRIGGERED", [
+                        'text' => $textLower
+                    ]);
+
+                    $this->saveOrUpdateAttendance(
+                        $name,
+                        $email,
+                        $textLower,
+                        $time
+                    );
+
+                    return;
+
+                } else {
+
+                    $type = 'MESSAGE';
+
+                    $check = $this->checkAbusive($textToSave);
+
+                    $textToSave = $check['message'];
+                    $abusiveText   = $check['abusive'];
+
+                    $this->saveToSheet(
+                        $name,
+                        $email,
+                        $type,
+                        $textToSave,
+                        $abusiveText,
+                        $attachment,
+                        $time
+                    );
+
+                    Log::info("Message detected", [
+                        'name' => $name,
+                        'email' => $email,
+                        'message' => $textToSave,
+                        'time' => $time,
+                        'event_id' => $eventId
+                    ]);
+                }
+
+
             }
 
         } catch (\Exception $e) {
@@ -302,4 +348,216 @@ class SlackController extends Controller
         }
 
         return $userData;
-    }}
+    }
+
+//    private function saveOrUpdateAttendance($name, $email, $text, $time)
+//    {
+//        try {
+//            $client = new Client();
+//            $client->setAuthConfig(storage_path('app/google.json'));
+//            $client->addScope(Sheets::SPREADSHEETS);
+//
+//            $service = new Sheets($client);
+//            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+//
+//            $sheetName = "Attendance";
+//
+//            // 🔥 SAFE GET (NO CRASH)
+//            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:F");
+//            $rows = $response->getValues() ?? [];
+//
+//            $today = now()->timezone('Asia/Karachi')->format('Y-m-d');
+//
+//            $isCheckout = str_contains($text, 'out');
+//
+//            // 🔍 SEARCH EXISTING ROW
+//            foreach ($rows as $index => $row) {
+//
+//                if ($index === 0) continue; // skip header
+//
+//                $rowEmail = $row[1] ?? '';
+//                $checkIn  = $row[2] ?? '';
+//
+//                if (!$rowEmail || !$checkIn) continue;
+//
+//                $rowDate = substr($checkIn, 0, 10);
+//
+//                if ($rowEmail === $email && $rowDate === $today) {
+//
+//                    if ($isCheckout) {
+//
+//                        $rowIndex = $index + 1;
+//
+//                        $values = [[
+//                            $row[0],
+//                            $row[1],
+//                            $row[2],
+//                            $time,        // checkout
+//                            $row[4] ?? '',
+//                            $row[5] ?? $time
+//                        ]];
+//
+//                        $body = new \Google\Service\Sheets\ValueRange(['values' => $values]);
+//
+//                        $service->spreadsheets_values->update(
+//                            $spreadsheetId,
+//                            "$sheetName!A{$rowIndex}:F{$rowIndex}",
+//                            $body,
+//                            ['valueInputOption' => 'RAW']
+//                        );
+//
+//                        Log::info("✅ Checkout updated");
+//                        return;
+//                    }
+//                }
+//            }
+//
+//            // 🔥 CHECKIN (NEW ROW)
+//            if (str_contains($text, 'in')) {
+//
+//                $values = [[
+//                    $name,
+//                    $email,
+//                    $time,
+//                    '',
+//                    '',
+//                    $time
+//                ]];
+//
+//                $body = new \Google\Service\Sheets\ValueRange(['values' => $values]);
+//
+//                $service->spreadsheets_values->append(
+//                    $spreadsheetId,
+//                    "$sheetName!A:F",
+//                    $body,
+//                    ['valueInputOption' => 'RAW']
+//                );
+//
+//                Log::info("✅ Checkin inserted");
+//            }
+//
+//        } catch (\Exception $e) {
+//
+//            Log::error("❌ Attendance FAILED", [
+//                'error' => $e->getMessage()
+//            ]);
+//        }
+//    }
+
+    private function saveOrUpdateAttendance($name, $email, $text, $time)
+    {
+        try {
+            $client = new Client();
+            $client->setAuthConfig(storage_path('app/google.json'));
+            $client->addScope(\Google\Service\Sheets::SPREADSHEETS);
+
+            $service = new \Google\Service\Sheets($client);
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+
+            $sheetName = "Attendance";
+
+            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:H");
+            $rows = $response->getValues() ?? [];
+
+            $isCheckout = str_contains($text, 'out');
+
+            foreach ($rows as $index => $row) {
+
+                if ($index === 0) continue;
+
+                $rowEmail = $row[1] ?? '';
+                $status   = $row[4] ?? '';
+
+                // =========================
+                // 🔥 CHECKOUT (OPEN SESSION)
+                // =========================
+                if ($isCheckout) {
+
+                    if ($rowEmail === $email && strtoupper($status) === 'OPEN') {
+
+                        $checkInTime = ltrim($row[2], " '");
+                        $timeClean   = ltrim($time, " '");
+
+                        $checkIn = \Carbon\Carbon::parse($checkInTime, 'Asia/Karachi');
+                        $checkOut = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
+
+                        $totalMinutes = $checkIn->diffInMinutes($checkOut);
+
+                        $hours = floor($totalMinutes / 60);
+                        $minutes = $totalMinutes % 60;
+
+                        $totalHours = "{$hours}h {$minutes}m";
+
+                        $rowIndex = $index + 1;
+
+                        $values = [[
+                            $row[0],        // Name
+                            $row[1],        // Email
+                            $row[2],        // Check In
+                            $timeClean,     // Check Out
+                            'CLOSED',       // Status
+                            $row[5] ?? '',  // Time
+                            $totalHours     // Total
+                        ]];
+
+                        $body = new \Google\Service\Sheets\ValueRange([
+                            'values' => $values
+                        ]);
+
+                        $service->spreadsheets_values->update(
+                            $spreadsheetId,
+                            "$sheetName!A{$rowIndex}:H{$rowIndex}",
+                            $body,
+                            ['valueInputOption' => 'RAW']
+                        );
+
+                        Log::info("✅ Checkout updated", [
+                            'email' => $email,
+                            'hours' => $totalHours
+                        ]);
+
+                        return;
+                    }
+                }
+            }
+
+            // =========================
+            // 🔥 CHECKIN INSERT
+            // =========================
+            if (str_contains($text, 'in')) {
+
+                $values = [[
+                    $name,
+                    $email,
+                    $time,
+                    '',
+                    'OPEN',
+                    $time,
+                    ''
+                ]];
+
+                $body = new \Google\Service\Sheets\ValueRange([
+                    'values' => $values
+                ]);
+
+                $service->spreadsheets_values->append(
+                    $spreadsheetId,
+                    "$sheetName!A:H",
+                    $body,
+                    ['valueInputOption' => 'RAW']
+                );
+
+                Log::info("✅ Checkin inserted", [
+                    'email' => $email,
+                    'time' => $time
+                ]);
+            }
+
+        } catch (\Exception $e) {
+
+            Log::error("❌ Attendance error", [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+}
