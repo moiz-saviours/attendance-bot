@@ -16,13 +16,138 @@ use Google\Service\Sheets;
 
 class SlackController extends Controller
 {
+//    public function attendance(Request $request)
+//    {
+//        Log::info("Slack request received", $request->all());
+//
+//        $payload = $request->all();
+//
+//        try {
+//            if (isset($payload['type']) && $payload['type'] === 'url_verification') {
+//                return response($payload['challenge'], 200)
+//                    ->header('Content-Type', 'text/plain');
+//            }
+//
+//            // Slack retry check
+//            $retryCount = $request->header('X-Slack-Retry-Num');
+//            if ($retryCount !== null && $retryCount > 0) {
+//
+//                return response()->json(['success' => true, 'message' => 'Retry ignored']);
+//            }
+//
+////            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
+//            if (isset($payload['event'])) {
+//
+//                $eventId = $payload['event_id'] ?? null;
+//                $eventTime = $payload['event_time'] ?? null;
+//                $userId = $payload['event']['user'] ?? null;
+//                $originalText = $payload['event']['text'] ?? '';
+//
+//                if (!$userId) {
+//                    return response()->json(['success'=>true]);
+//                }
+//
+//                $attachment = '';
+//                if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
+//                    $urls = [];
+//                    foreach ($payload['event']['files'] as $file) {
+//                        $urls[] = $file['url_private'] ?? '';
+//                    }
+//                    $attachment = implode("\n" , $urls);
+//                }
+//
+//                // Duplicate check
+//                $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
+//                if (Cache::has($uniqueKey)) {
+//                    Log::info("Duplicate event detected, skipping", ['event_id' => $eventId]);
+//                    return response()->json(['success' => true]);
+//                }
+//                Cache::put($uniqueKey, true, now()->addMinutes(5));
+//
+//                // User info
+//                $userData = $this->getSlackUserInfo($userId);
+//                $name = $userData['name'];
+//                $email = $userData['email'];
+//                $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+//
+//                    $textToSave = $this->convertMentionsToNames($originalText);
+//
+//                $textLower = strtolower($textToSave);
+//
+//                $isCheckin =
+//                    str_contains($textLower, 'checkin') ||
+//                    str_contains($textLower, 'check in') ||
+//                    str_contains($textLower, 'check-in');
+//
+//                $isCheckout =
+//                    str_contains($textLower, 'checkout') ||
+//                    str_contains($textLower, 'check out') ||
+//                    str_contains($textLower, 'check-out');
+//
+//                if ($isCheckin || $isCheckout) {
+//
+//                    Log::info("🔥 ATTENDANCE TRIGGERED", [
+//                        'text' => $textLower
+//                    ]);
+//
+//                    $this->saveOrUpdateAttendance(
+//                        $name,
+//                        $email,
+//                        $textLower,
+//                        $time
+//                    );
+//
+//                    return;
+//
+//                } else {
+//
+//                    $type = 'MESSAGE';
+//
+//                    $check = $this->checkAbusive($textToSave);
+//
+//                    $textToSave = $check['message'];
+//                    $abusiveText   = $check['abusive'];
+//
+//                    $this->saveToSheet(
+//                        $name,
+//                        $email,
+//                        $type,
+//                        $textToSave,
+//                        $abusiveText,
+//                        $attachment,
+//                        $time
+//                    );
+//
+//                    Log::info("Message detected", [
+//                        'name' => $name,
+//                        'email' => $email,
+//                        'message' => $textToSave,
+//                        'time' => $time,
+//                        'event_id' => $eventId
+//                    ]);
+//                }
+//
+//
+//            }
+//
+//        } catch (\Exception $e) {
+//            Log::error("Slack attendance error", [
+//                'message' => $e->getMessage(),
+//                'trace' => $e->getTraceAsString()
+//            ]);
+//        }
+//
+//        return response()->json(['success'=>true]);
+//    }
+
     public function attendance(Request $request)
     {
-        Log::info("Slack request received", $request->all());
+//        Log::info("Slack request received", $request->all());
 
         $payload = $request->all();
 
         try {
+
             if (isset($payload['type']) && $payload['type'] === 'url_verification') {
                 return response($payload['challenge'], 200)
                     ->header('Content-Type', 'text/plain');
@@ -31,113 +156,156 @@ class SlackController extends Controller
             // Slack retry check
             $retryCount = $request->header('X-Slack-Retry-Num');
             if ($retryCount !== null && $retryCount > 0) {
-
                 return response()->json(['success' => true, 'message' => 'Retry ignored']);
             }
 
-//            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
-            if (isset($payload['event'])) {
-
-                $eventId = $payload['event_id'] ?? null;
-                $eventTime = $payload['event_time'] ?? null;
-                $userId = $payload['event']['user'] ?? null;
-                $originalText = $payload['event']['text'] ?? '';
-
-                if (!$userId) {
-                    return response()->json(['success'=>true]);
-                }
-
-                $attachment = '';
-                if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
-                    $urls = [];
-                    foreach ($payload['event']['files'] as $file) {
-                        $urls[] = $file['url_private'] ?? '';
-                    }
-                    $attachment = implode("\n" , $urls);
-                }
-
-                // Duplicate check
-                $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
-                if (Cache::has($uniqueKey)) {
-                    Log::info("Duplicate event detected, skipping", ['event_id' => $eventId]);
-                    return response()->json(['success' => true]);
-                }
-                Cache::put($uniqueKey, true, now()->addMinutes(5));
-
-                // User info
-                $userData = $this->getSlackUserInfo($userId);
-                $name = $userData['name'];
-                $email = $userData['email'];
-                $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
-
-                $textToSave = $this->convertMentionsToNames($originalText);
-
-                $textLower = strtolower($textToSave);
-
-                $isCheckin =
-                    str_contains($textLower, 'checkin') ||
-                    str_contains($textLower, 'check in') ||
-                    str_contains($textLower, 'check-in');
-
-                $isCheckout =
-                    str_contains($textLower, 'checkout') ||
-                    str_contains($textLower, 'check out') ||
-                    str_contains($textLower, 'check-out');
-
-                if ($isCheckin || $isCheckout) {
-
-                    Log::info("🔥 ATTENDANCE TRIGGERED", [
-                        'text' => $textLower
-                    ]);
-
-                    $this->saveOrUpdateAttendance(
-                        $name,
-                        $email,
-                        $textLower,
-                        $time
-                    );
-
-                    return;
-
-                } else {
-
-                    $type = 'MESSAGE';
-
-                    $check = $this->checkAbusive($textToSave);
-
-                    $textToSave = $check['message'];
-                    $abusiveText   = $check['abusive'];
-
-                    $this->saveToSheet(
-                        $name,
-                        $email,
-                        $type,
-                        $textToSave,
-                        $abusiveText,
-                        $attachment,
-                        $time
-                    );
-
-                    Log::info("Message detected", [
-                        'name' => $name,
-                        'email' => $email,
-                        'message' => $textToSave,
-                        'time' => $time,
-                        'event_id' => $eventId
-                    ]);
-                }
-
-
+            if (!isset($payload['event'])) {
+                return response()->json(['success' => true]);
             }
 
+            $eventId = $payload['event_id'] ?? null;
+            $eventTime = $payload['event_time'] ?? null;
+            $userId = $payload['event']['user'] ?? null;
+            $originalText = $payload['event']['text'] ?? '';
+
+            if (!$userId) {
+                return response()->json(['success' => true]);
+            }
+
+            // attachments
+            $attachment = '';
+            if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
+                $urls = [];
+                foreach ($payload['event']['files'] as $file) {
+                    $urls[] = $file['url_private'] ?? '';
+                }
+                $attachment = implode("\n", $urls);
+            }
+
+            // duplicate check
+            $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
+            if (Cache::has($uniqueKey)) {
+                Log::info("Duplicate event detected", ['event_id' => $eventId]);
+                return response()->json(['success' => true]);
+            }
+            Cache::put($uniqueKey, true, now()->addMinutes(5));
+
+            $userData = $this->getSlackUserInfo($userId);
+            $name = $userData['name'];
+            $email = $userData['email'];
+
+            $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+
+            /*
+            -------------------------------------------------
+            🚀 TASK FEATURE (RUN FIRST - RAW TEXT)
+            -------------------------------------------------
+            */
+
+            $isTaskAssign = str_contains(strtolower($originalText), '#taskassignto');
+
+            if ($isTaskAssign) {
+
+                preg_match('/<@([A-Z0-9]+)>/', $originalText, $match);
+                $taskUserId = $match[1] ?? null;
+
+                if ($taskUserId) {
+
+                    $taskUser = $this->getSlackUserInfo($taskUserId);
+                    $taskUserName = $taskUser['name'] ?? 'Unknown';
+
+                    $taskText = preg_replace('/#taskassignto\s*/i', '', $originalText);
+
+                    $taskText = preg_replace('/<@[A-Z0-9]+>/', '', $taskText);
+
+                    $this->saveTaskToSheet(
+                        $taskUserName,
+                        $taskText,
+                        $time
+                    );
+
+                    Log::info("Task Assigned", [
+                        'user' => $taskUserName,
+                        'task' => $taskText
+                    ]);
+
+                    return response()->json(['success' => true]);
+                }
+            }
+
+
+
+            /*
+            -------------------------------------------------
+            🔄 NORMAL FLOW STARTS HERE
+            -------------------------------------------------
+            */
+
+            $textToSave = $this->convertMentionsToNames($originalText);
+
+            $textLower = strtolower($textToSave);
+
+            $isCheckin =
+                str_contains($textLower, 'checkin') ||
+                str_contains($textLower, 'check in') ||
+                str_contains($textLower, 'check-in');
+
+            $isCheckout =
+                str_contains($textLower, 'checkout') ||
+                str_contains($textLower, 'check out') ||
+                str_contains($textLower, 'check-out');
+
+            if ($isCheckin || $isCheckout) {
+
+                Log::info("🔥 ATTENDANCE TRIGGERED", [
+                    'text' => $textLower
+                ]);
+
+                $this->saveOrUpdateAttendance(
+                    $name,
+                    $email,
+                    $textLower,
+                    $time
+                );
+
+                return response()->json(['success' => true]);
+            }
+
+            // MESSAGE FLOW
+            $type = 'MESSAGE';
+
+            $check = $this->checkAbusive($textToSave);
+
+            $textToSave = $check['message'];
+            $abusiveText = $check['abusive'];
+
+            $this->saveToSheet(
+                $name,
+                $email,
+                $type,
+                $textToSave,
+                $abusiveText,
+                $attachment,
+                $time
+            );
+
+            Log::info("Message detected", [
+                'name' => $name,
+                'email' => $email,
+                'message' => $textToSave,
+                'time' => $time,
+                'event_id' => $eventId
+            ]);
+
         } catch (\Exception $e) {
+
             Log::error("Slack attendance error", [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
         }
 
-        return response()->json(['success'=>true]);
+        return response()->json(['success' => true]);
     }
 
     private function saveToSheet($name, $email, $type, $message, $abusive, $attachment, $time)
@@ -220,12 +388,20 @@ class SlackController extends Controller
     }
     private function convertMentionsToNames($text)
     {
+        $workspaceUrl = env('SLACK_WORKSPACE_URL');
+
         preg_match_all('/<@([A-Z0-9]+)>/', $text, $matches);
 
         foreach ($matches[1] as $mentionedUserId) {
+
             $mentionedUser = $this->getSlackUserInfo($mentionedUserId);
             $mentionedName = $mentionedUser['name'] ?? 'Unknown';
-            $text = str_replace("<@{$mentionedUserId}>", "@{$mentionedName}", $text);
+
+            $profileUrl = $workspaceUrl . "/team/" . $mentionedUserId;
+
+            $replacement = "@{$mentionedName} {$profileUrl} ";
+
+            $text = str_replace("<@{$mentionedUserId}>", $replacement, $text);
         }
 
         return $text;
@@ -350,99 +526,6 @@ class SlackController extends Controller
         return $userData;
     }
 
-//    private function saveOrUpdateAttendance($name, $email, $text, $time)
-//    {
-//        try {
-//            $client = new Client();
-//            $client->setAuthConfig(storage_path('app/google.json'));
-//            $client->addScope(Sheets::SPREADSHEETS);
-//
-//            $service = new Sheets($client);
-//            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
-//
-//            $sheetName = "Attendance";
-//
-//            // 🔥 SAFE GET (NO CRASH)
-//            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:F");
-//            $rows = $response->getValues() ?? [];
-//
-//            $today = now()->timezone('Asia/Karachi')->format('Y-m-d');
-//
-//            $isCheckout = str_contains($text, 'out');
-//
-//            // 🔍 SEARCH EXISTING ROW
-//            foreach ($rows as $index => $row) {
-//
-//                if ($index === 0) continue; // skip header
-//
-//                $rowEmail = $row[1] ?? '';
-//                $checkIn  = $row[2] ?? '';
-//
-//                if (!$rowEmail || !$checkIn) continue;
-//
-//                $rowDate = substr($checkIn, 0, 10);
-//
-//                if ($rowEmail === $email && $rowDate === $today) {
-//
-//                    if ($isCheckout) {
-//
-//                        $rowIndex = $index + 1;
-//
-//                        $values = [[
-//                            $row[0],
-//                            $row[1],
-//                            $row[2],
-//                            $time,        // checkout
-//                            $row[4] ?? '',
-//                            $row[5] ?? $time
-//                        ]];
-//
-//                        $body = new \Google\Service\Sheets\ValueRange(['values' => $values]);
-//
-//                        $service->spreadsheets_values->update(
-//                            $spreadsheetId,
-//                            "$sheetName!A{$rowIndex}:F{$rowIndex}",
-//                            $body,
-//                            ['valueInputOption' => 'RAW']
-//                        );
-//
-//                        Log::info("✅ Checkout updated");
-//                        return;
-//                    }
-//                }
-//            }
-//
-//            // 🔥 CHECKIN (NEW ROW)
-//            if (str_contains($text, 'in')) {
-//
-//                $values = [[
-//                    $name,
-//                    $email,
-//                    $time,
-//                    '',
-//                    '',
-//                    $time
-//                ]];
-//
-//                $body = new \Google\Service\Sheets\ValueRange(['values' => $values]);
-//
-//                $service->spreadsheets_values->append(
-//                    $spreadsheetId,
-//                    "$sheetName!A:F",
-//                    $body,
-//                    ['valueInputOption' => 'RAW']
-//                );
-//
-//                Log::info("✅ Checkin inserted");
-//            }
-//
-//        } catch (\Exception $e) {
-//
-//            Log::error("❌ Attendance FAILED", [
-//                'error' => $e->getMessage()
-//            ]);
-//        }
-//    }
 
     private function saveOrUpdateAttendance($name, $email, $text, $time)
     {
@@ -565,4 +648,89 @@ class SlackController extends Controller
             ]);
         }
     }
+
+    private function saveTaskToSheet($userName, $task, $time)
+    {
+        try {
+
+            $client = new Client();
+            $client->setAuthConfig(storage_path('app/google.json'));
+            $client->addScope(\Google\Service\Sheets::SPREADSHEETS);
+
+            $service = new \Google\Service\Sheets($client);
+
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+
+            // STEP 1: check sheet exists
+            $spreadsheet = $service->spreadsheets->get($spreadsheetId);
+
+            $exists = false;
+
+            foreach ($spreadsheet->getSheets() as $sheet) {
+                if ($sheet->getProperties()->getTitle() === $userName) {
+                    $exists = true;
+                    break;
+                }
+            }
+
+            // STEP 2: create sheet if not exists2
+            if (!$exists) {
+
+                $requests = [
+                    new \Google_Service_Sheets_Request([
+                        'addSheet' => [
+                            'properties' => [
+                                'title' => $userName
+                            ]
+                        ]
+                    ])
+                ];
+
+                $batchUpdateRequest = new \Google_Service_Sheets_BatchUpdateSpreadsheetRequest([
+                    'requests' => $requests
+                ]);
+
+                $service->spreadsheets->batchUpdate($spreadsheetId, $batchUpdateRequest);
+
+                // header row
+                $header = new \Google_Service_Sheets_ValueRange([
+                    'values' => [['Task', 'Description','Created At']]
+                ]);
+
+                $service->spreadsheets_values->append(
+                    $spreadsheetId,
+                    $userName . "!A:C",
+                    $header,
+                    ['valueInputOption' => 'RAW']
+                );
+            }
+
+            // STEP 3: insert task
+            $values = [[
+                $task,
+                '',
+                $time
+            ]];
+
+            $body = new \Google_Service_Sheets_ValueRange([
+                'values' => $values
+            ]);
+
+            $service->spreadsheets_values->append(
+                $spreadsheetId,
+                $userName . "!A:C",
+                $body,
+                ['valueInputOption' => 'RAW']
+            );
+
+        } catch (\Exception $e) {
+
+            Log::error("Task Sheet Error", [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+
+
 }
