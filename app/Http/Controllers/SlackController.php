@@ -16,129 +16,6 @@ use Google\Service\Sheets;
 
 class SlackController extends Controller
 {
-//    public function attendance(Request $request)
-//    {
-//        Log::info("Slack request received", $request->all());
-//
-//        $payload = $request->all();
-//
-//        try {
-//            if (isset($payload['type']) && $payload['type'] === 'url_verification') {
-//                return response($payload['challenge'], 200)
-//                    ->header('Content-Type', 'text/plain');
-//            }
-//
-//            // Slack retry check
-//            $retryCount = $request->header('X-Slack-Retry-Num');
-//            if ($retryCount !== null && $retryCount > 0) {
-//
-//                return response()->json(['success' => true, 'message' => 'Retry ignored']);
-//            }
-//
-////            if (isset($payload['event']) && !isset($payload['event']['subtype'])) {
-//            if (isset($payload['event'])) {
-//
-//                $eventId = $payload['event_id'] ?? null;
-//                $eventTime = $payload['event_time'] ?? null;
-//                $userId = $payload['event']['user'] ?? null;
-//                $originalText = $payload['event']['text'] ?? '';
-//
-//                if (!$userId) {
-//                    return response()->json(['success'=>true]);
-//                }
-//
-//                $attachment = '';
-//                if (isset($payload['event']['files']) && count($payload['event']['files']) > 0) {
-//                    $urls = [];
-//                    foreach ($payload['event']['files'] as $file) {
-//                        $urls[] = $file['url_private'] ?? '';
-//                    }
-//                    $attachment = implode("\n" , $urls);
-//                }
-//
-//                // Duplicate check
-//                $uniqueKey = "slack_event_{$eventId}_{$userId}_{$eventTime}";
-//                if (Cache::has($uniqueKey)) {
-//                    Log::info("Duplicate event detected, skipping", ['event_id' => $eventId]);
-//                    return response()->json(['success' => true]);
-//                }
-//                Cache::put($uniqueKey, true, now()->addMinutes(5));
-//
-//                // User info
-//                $userData = $this->getSlackUserInfo($userId);
-//                $name = $userData['name'];
-//                $email = $userData['email'];
-//                $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
-//
-//                    $textToSave = $this->convertMentionsToNames($originalText);
-//
-//                $textLower = strtolower($textToSave);
-//
-//                $isCheckin =
-//                    str_contains($textLower, 'checkin') ||
-//                    str_contains($textLower, 'check in') ||
-//                    str_contains($textLower, 'check-in');
-//
-//                $isCheckout =
-//                    str_contains($textLower, 'checkout') ||
-//                    str_contains($textLower, 'check out') ||
-//                    str_contains($textLower, 'check-out');
-//
-//                if ($isCheckin || $isCheckout) {
-//
-//                    Log::info("🔥 ATTENDANCE TRIGGERED", [
-//                        'text' => $textLower
-//                    ]);
-//
-//                    $this->saveOrUpdateAttendance(
-//                        $name,
-//                        $email,
-//                        $textLower,
-//                        $time
-//                    );
-//
-//                    return;
-//
-//                } else {
-//
-//                    $type = 'MESSAGE';
-//
-//                    $check = $this->checkAbusive($textToSave);
-//
-//                    $textToSave = $check['message'];
-//                    $abusiveText   = $check['abusive'];
-//
-//                    $this->saveToSheet(
-//                        $name,
-//                        $email,
-//                        $type,
-//                        $textToSave,
-//                        $abusiveText,
-//                        $attachment,
-//                        $time
-//                    );
-//
-//                    Log::info("Message detected", [
-//                        'name' => $name,
-//                        'email' => $email,
-//                        'message' => $textToSave,
-//                        'time' => $time,
-//                        'event_id' => $eventId
-//                    ]);
-//                }
-//
-//
-//            }
-//
-//        } catch (\Exception $e) {
-//            Log::error("Slack attendance error", [
-//                'message' => $e->getMessage(),
-//                'trace' => $e->getTraceAsString()
-//            ]);
-//        }
-//
-//        return response()->json(['success'=>true]);
-//    }
 
     public function attendance(Request $request)
     {
@@ -195,6 +72,7 @@ class SlackController extends Controller
             $email = $userData['email'];
 
             $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+            $isManager = ($email === env('MANAGER_EMAIL'));
 
             /*
             -------------------------------------------------
@@ -206,6 +84,18 @@ class SlackController extends Controller
 
             if ($isTaskAssign) {
 
+                if (!$isManager) {
+
+                    Log::warning("🚫 Task Assign Blocked (Unauthorized)", [
+                        'user_email' => $email,
+                        'user_name'  => $name,
+                        'text'       => $originalText,
+                        'time'       => $time,
+                    ]);
+
+                    return response()->json(['success' => true]);
+                }
+
                 preg_match('/<@([A-Z0-9]+)>/', $originalText, $match);
                 $taskUserId = $match[1] ?? null;
 
@@ -215,25 +105,87 @@ class SlackController extends Controller
                     $taskUserName = $taskUser['name'] ?? 'Unknown';
 
                     $taskText = preg_replace('/#taskassignto\s*/i', '', $originalText);
+                    $taskText = str_replace("<@{$taskUserId}>", '', $taskText);
+                    $taskText = $this->convertMentionsToNames($taskText);
+                    $taskText = trim($taskText);
 
-                    $taskText = preg_replace('/<@[A-Z0-9]+>/', '', $taskText);
+                    $this->saveTaskToSheet($taskUserName, $taskText, $time);
 
-                    $this->saveTaskToSheet(
-                        $taskUserName,
-                        $taskText,
-                        $time
-                    );
-
-                    Log::info("Task Assigned", [
-                        'user' => $taskUserName,
-                        'task' => $taskText
+                    Log::info("✅ Task Assigned Successfully", [
+                        'assigned_by' => $email,
+                        'assigned_to' => $taskUserName,
+                        'task'        => $taskText,
+                        'time'        => $time,
                     ]);
 
                     return response()->json(['success' => true]);
                 }
             }
 
+            $isTaskUpdate = str_contains(strtolower($originalText), '#taskupdate:');
 
+            if ($isTaskUpdate) {
+
+                $updateText = trim(str_ireplace('#taskupdate:', '', $originalText));
+
+                // get sheet name (same logic as task assign)
+                $user = $this->getSlackUserInfo($userId);
+                $userName = $user['name'] ?? 'Unknown';
+
+                $this->updateTaskInSheet(
+                    $userName,
+                    $updateText,
+                    $time
+                );
+
+                Log::info("Task Updated", [
+                    'user' => $userName,
+                    'update' => $updateText
+                ]);
+
+                return response()->json(['success' => true]);
+            }
+
+            $isTaskRemark = str_contains(strtolower($originalText), '#taskremark:');
+
+            if ($isTaskRemark) {
+
+                if (!$isManager) {
+
+                    Log::warning("Task Remark Blocked (Unauthorized)", [
+                        'user_email' => $email,
+                        'user_name'  => $name,
+                        'text'       => $originalText,
+                        'time'       => $time,
+                    ]);
+
+                    return response()->json(['success' => true]);
+                }
+
+                preg_match('/<@([A-Z0-9]+)>/', $originalText, $match);
+                $targetUserId = $match[1] ?? null;
+
+                if ($targetUserId) {
+
+                    $targetUser = $this->getSlackUserInfo($targetUserId);
+                    $targetUserName = $targetUser['name'] ?? 'Unknown';
+
+                    $remarkText = preg_replace('/#taskremark:\s*/i', '', $originalText);
+                    $remarkText = preg_replace('/<@[A-Z0-9]+>/', '', $remarkText);
+                    $remarkText = trim($remarkText);
+
+                    $this->addRemarkToTask($targetUserName, $remarkText, $time);
+
+                    Log::info("Task Remark Added Successfully", [
+                        'added_by'   => $email,
+                        'target_user'=> $targetUserName,
+                        'remark'     => $remarkText,
+                        'time'       => $time,
+                    ]);
+
+                    return response()->json(['success' => true]);
+                }
+            }
 
             /*
             -------------------------------------------------
@@ -262,6 +214,28 @@ class SlackController extends Controller
                 ]);
 
                 $this->saveOrUpdateAttendance(
+                    $name,
+                    $email,
+                    $textLower,
+                    $time
+                );
+
+                return response()->json(['success' => true]);
+            }
+
+            $isBreakIn =
+                str_contains($textLower, 'breakin') ||
+                str_contains($textLower, 'break in') ||
+                str_contains($textLower, 'break-in');
+
+            $isBreakOut =
+                str_contains($textLower, 'breakout') ||
+                str_contains($textLower, 'break out') ||
+                str_contains($textLower, 'break-out');
+
+            if ($isBreakIn || $isBreakOut) {
+
+                $this->saveOrUpdateBreak(
                     $name,
                     $email,
                     $textLower,
@@ -539,7 +513,7 @@ class SlackController extends Controller
 
             $sheetName = "Attendance";
 
-            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:G");
+            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:J");
             $rows = $response->getValues() ?? [];
 
             $isCheckout = str_contains($text, 'out');
@@ -559,6 +533,9 @@ class SlackController extends Controller
 
                     $checkInTime = ltrim($checkInTime, " '");
                     $timeClean   = ltrim($time, " '");
+
+                    $carbon = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
+                    $dayName = $carbon->format('l'); // Monday, Tuesday etc.
 
                     $checkIn = \Carbon\Carbon::parse($checkInTime, 'Asia/Karachi');
                     $current = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
@@ -584,9 +561,12 @@ class SlackController extends Controller
                                 $row[1],
                                 $row[2],
                                 $timeClean,
-                                $row[4] ?? '',
+                                $dayName,
                                 $timeClean,
-                                $totalHours
+                                $totalHours,
+                                $row[7] ?? '',
+                                $row[8] ?? '',
+                                $row[9] ?? ''
                             ]];
 
                             $body = new \Google\Service\Sheets\ValueRange([
@@ -619,8 +599,11 @@ class SlackController extends Controller
                     $email,
                     $time,
                     '',
-                    '',
+                    $dayName,
                     $time,
+                    '',
+                    '',
+                    '',
                     ''
                 ]];
 
@@ -646,6 +629,108 @@ class SlackController extends Controller
             Log::error("❌ Attendance error", [
                 'error' => $e->getMessage()
             ]);
+        }
+    }
+
+    private function saveOrUpdateBreak($name, $email, $text, $time)
+    {
+        try {
+
+            $client = new Client();
+            $client->setAuthConfig(storage_path('app/google.json'));
+            $client->addScope(\Google\Service\Sheets::SPREADSHEETS);
+
+            $service = new \Google\Service\Sheets($client);
+
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+            $sheetName = "Attendance";
+
+            $response = $service->spreadsheets_values->get($spreadsheetId, "$sheetName!A:J");
+            $rows = $response->getValues() ?? [];
+
+            $isBreakOut = str_contains($text, 'out');
+
+            foreach ($rows as $index => $row) {
+
+                if ($index === 0) continue;
+
+                $rowEmail = $row[1] ?? '';
+                $checkOutTime = $row[3] ?? '';
+
+                // 🔥 SAME LOGIC AS ATTENDANCE
+                if ($rowEmail === $email && empty($checkOutTime)) {
+
+                    $rowIndex = $index + 1;
+
+                    $breakStart = $row[7] ?? '';
+                    $breakEnd   = $row[8] ?? '';
+
+                    // 🟢 BREAK IN (start break)
+                    if (!$isBreakOut) {
+
+                        $values = [[
+                            $row[0],
+                            $row[1],
+                            $row[2],
+                            $row[3],
+                            $row[4] ?? '',
+                            $row[5] ?? '',
+                            $row[6] ?? '',
+                            $time,
+                            '',
+                            ''
+                        ]];
+
+                        $service->spreadsheets_values->update(
+                            $spreadsheetId,
+                            "$sheetName!A{$rowIndex}:J{$rowIndex}",
+                            new \Google\Service\Sheets\ValueRange(['values' => $values]),
+                            ['valueInputOption' => 'RAW']
+                        );
+
+                        return;
+                    }
+
+                    // BREAK OUT (end break)
+                    if ($isBreakOut && !empty($breakStart)) {
+
+                        $start = \Carbon\Carbon::parse($breakStart, 'Asia/Karachi');
+                        $end   = \Carbon\Carbon::parse($time, 'Asia/Karachi');
+
+                        $minutes = $start->diffInMinutes($end);
+
+                        $hours = floor($minutes / 60);
+                        $mins  = $minutes % 60;
+
+                        $totalBreak = "{$hours}h {$mins}m";
+
+                        $values = [[
+                            $row[0],
+                            $row[1],
+                            $row[2],
+                            $row[3],
+                            $row[4] ?? '',
+                            $row[5] ?? '',
+                            $row[6] ?? '',
+                            $breakStart,
+                            $time,
+                            $totalBreak
+                        ]];
+
+                        $service->spreadsheets_values->update(
+                            $spreadsheetId,
+                            "$sheetName!A{$rowIndex}:J{$rowIndex}",
+                            new \Google\Service\Sheets\ValueRange(['values' => $values]),
+                            ['valueInputOption' => 'RAW']
+                        );
+
+                        return;
+                    }
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error("Break error", ['error' => $e->getMessage()]);
         }
     }
 
@@ -694,12 +779,12 @@ class SlackController extends Controller
 
                 // header row
                 $header = new \Google_Service_Sheets_ValueRange([
-                    'values' => [['Task', 'Description','Created At']]
+                    'values' => [['Task', 'Description', 'Remarks', 'Created At']]
                 ]);
 
                 $service->spreadsheets_values->append(
                     $spreadsheetId,
-                    $userName . "!A:C",
+                    $userName . "!A:D",
                     $header,
                     ['valueInputOption' => 'RAW']
                 );
@@ -708,6 +793,7 @@ class SlackController extends Controller
             // STEP 3: insert task
             $values = [[
                 $task,
+                '',
                 '',
                 $time
             ]];
@@ -718,7 +804,7 @@ class SlackController extends Controller
 
             $service->spreadsheets_values->append(
                 $spreadsheetId,
-                $userName . "!A:C",
+                $userName . "!A:D",
                 $body,
                 ['valueInputOption' => 'RAW']
             );
@@ -731,6 +817,221 @@ class SlackController extends Controller
         }
     }
 
+    private function updateTaskInSheet($userName, $updateText, $time)
+    {
+        try {
 
+            $client = new Client();
+            $client->setAuthConfig(storage_path('app/google.json'));
+            $client->addScope(\Google\Service\Sheets::SPREADSHEETS);
+
+            $service = new \Google\Service\Sheets($client);
+
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+
+            /*
+            ------------------------------------------
+            STEP 1: CHECK SHEET EXISTS
+            ------------------------------------------
+            */
+            $spreadsheet = $service->spreadsheets->get($spreadsheetId);
+
+            $exists = false;
+
+            foreach ($spreadsheet->getSheets() as $sheet) {
+                if ($sheet->getProperties()->getTitle() === $userName) {
+                    $exists = true;
+                    break;
+                }
+            }
+
+            /*
+            ------------------------------------------
+            STEP 2: CREATE SHEET IF NOT EXISTS
+            ------------------------------------------
+            */
+            if (!$exists) {
+
+                $requests = [
+                    new \Google_Service_Sheets_Request([
+                        'addSheet' => [
+                            'properties' => [
+                                'title' => $userName
+                            ]
+                        ]
+                    ])
+                ];
+
+                $batchUpdateRequest = new \Google_Service_Sheets_BatchUpdateSpreadsheetRequest([
+                    'requests' => $requests
+                ]);
+
+                $service->spreadsheets->batchUpdate($spreadsheetId, $batchUpdateRequest);
+
+                // header row
+                $header = new \Google_Service_Sheets_ValueRange([
+                    'values' => [['Task', 'Description', 'Remarks', 'Created At']]
+                ]);
+
+                $service->spreadsheets_values->append(
+                    $spreadsheetId,
+                    $userName . "!A:D",
+                    $header,
+                    ['valueInputOption' => 'RAW']
+                );
+            }
+
+            /*
+            ------------------------------------------
+            STEP 3: GET SHEET DATA
+            ------------------------------------------
+            */
+            $response = $service->spreadsheets_values->get(
+                $spreadsheetId,
+                $userName . "!A:D"
+            );
+
+            $rows = $response->getValues() ?? [];
+
+            /*
+            ------------------------------------------
+            STEP 4: GET LAST ROW
+            ------------------------------------------
+            */
+            $lastIndex = count($rows) - 1;
+            $lastRow = $rows[$lastIndex] ?? [];
+
+            $lastDescription = $lastRow[1] ?? '';
+
+            /*
+            ------------------------------------------
+            CASE A: LAST ROW HAS DESCRIPTION → NEW ROW
+            ------------------------------------------
+            */
+            if (!empty($lastDescription)) {
+
+                $values = [[
+                    'No Task Assigned',
+                    $updateText,
+                    '',
+                    $time
+                ]];
+
+                $service->spreadsheets_values->append(
+                    $spreadsheetId,
+                    $userName . "!A:D",
+                    new \Google\Service\Sheets\ValueRange([
+                        'values' => $values
+                    ]),
+                    ['valueInputOption' => 'RAW']
+                );
+
+                Log::info("New task row created (previous already updated)", [
+                    'user' => $userName,
+                    'update' => $updateText
+                ]);
+
+                return;
+            }
+
+            /*
+            ------------------------------------------
+            CASE B: UPDATE EXISTING ROW
+            ------------------------------------------
+            */
+            $rowIndex = $lastIndex + 1;
+
+            $values = [[
+                $lastRow[0] ?? 'No Task',
+                $updateText,
+                $lastRow[2] ?? '',
+                $lastRow[3] ?? ''
+            ]];
+
+            $service->spreadsheets_values->update(
+                $spreadsheetId,
+                $userName . "!A{$rowIndex}:D{$rowIndex}",
+                new \Google\Service\Sheets\ValueRange([
+                    'values' => $values
+                ]),
+                ['valueInputOption' => 'RAW']
+            );
+
+            Log::info("Task updated successfully", [
+                'user' => $userName,
+                'row' => $rowIndex
+            ]);
+
+        } catch (\Exception $e) {
+
+            Log::error("Task update error", [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function addRemarkToTask($userName, $remarkText, $time)
+    {
+        try {
+
+            $client = new Client();
+            $client->setAuthConfig(storage_path('app/google.json'));
+            $client->addScope(\Google\Service\Sheets::SPREADSHEETS);
+
+            $service = new \Google\Service\Sheets($client);
+
+            $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+
+            $sheetName = $userName;
+
+            $response = $service->spreadsheets_values->get(
+                $spreadsheetId,
+                $sheetName . "!A:D"
+            );
+
+            $rows = $response->getValues() ?? [];
+
+            if (count($rows) <= 1) return;
+
+            for ($i = count($rows) - 1; $i > 0; $i--) {
+
+                if (!empty($rows[$i][0])) {
+
+                    $rowIndex = $i + 1;
+
+                    $values = [[
+                        $rows[$i][0] ?? '',
+                        $rows[$i][1] ?? '',
+                        $remarkText,
+                        $rows[$i][3] ?? ''
+                    ]];
+
+                    $body = new \Google\Service\Sheets\ValueRange([
+                        'values' => $values
+                    ]);
+
+                    $service->spreadsheets_values->update(
+                        $spreadsheetId,
+                        $sheetName . "!A{$rowIndex}:D{$rowIndex}",
+                        $body,
+                        ['valueInputOption' => 'RAW']
+                    );
+
+                    Log::info("Remark added to task", [
+                        'user' => $userName,
+                        'row' => $rowIndex
+                    ]);
+
+                    return;
+                }
+            }
+
+        } catch (\Exception $e) {
+
+            Log::error("Task remark error", [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
 
 }
