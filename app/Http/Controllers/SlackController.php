@@ -71,7 +71,10 @@ class SlackController extends Controller
             $name = $userData['name'];
             $email = $userData['email'];
 
-            $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+//            $time = now()->timezone('Asia/Karachi')->format('Y-m-d H:i:s');
+            $time = \Carbon\Carbon::createFromTimestamp($eventTime)
+                ->timezone('Asia/Karachi')
+                ->format('Y-m-d H:i:s');
             $isManager = ($email === env('MANAGER_EMAIL'));
 
             /*
@@ -534,11 +537,9 @@ class SlackController extends Controller
                     $checkInTime = ltrim($checkInTime, " '");
                     $timeClean   = ltrim($time, " '");
 
-                    $carbon = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
-                    $dayName = $carbon->format('l'); // Monday, Tuesday etc.
-
                     $checkIn = \Carbon\Carbon::parse($checkInTime, 'Asia/Karachi');
                     $current = \Carbon\Carbon::parse($timeClean, 'Asia/Karachi');
+
 
                     // 🔥 15 HOURS RULE
                     $diffHours = $checkIn->diffInHours($current);
@@ -561,12 +562,9 @@ class SlackController extends Controller
                                 $row[1],
                                 $row[2],
                                 $timeClean,
-                                $dayName,
+                                $row[4] ?? '',
                                 $timeClean,
-                                $totalHours,
-                                $row[7] ?? '',
-                                $row[8] ?? '',
-                                $row[9] ?? ''
+                                $totalHours
                             ]];
 
                             $body = new \Google\Service\Sheets\ValueRange([
@@ -590,6 +588,7 @@ class SlackController extends Controller
                     }
                 }
             }
+            $day = \Carbon\Carbon::parse('Asia/Karachi')->format('l');
 
             // 🔥 CHECK-IN (NEW SHIFT)
             if (str_contains($text, 'in')) {
@@ -599,11 +598,8 @@ class SlackController extends Controller
                     $email,
                     $time,
                     '',
-                    $dayName,
+                    $day,
                     $time,
-                    '',
-                    '',
-                    '',
                     ''
                 ]];
 
@@ -691,7 +687,7 @@ class SlackController extends Controller
                         return;
                     }
 
-                    // BREAK OUT (end break)
+                    // 🔴 BREAK OUT (end break)
                     if ($isBreakOut && !empty($breakStart)) {
 
                         $start = \Carbon\Carbon::parse($breakStart, 'Asia/Karachi');
@@ -746,27 +742,38 @@ class SlackController extends Controller
 
             $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
-            // STEP 1: check sheet exists
+            $masterSheetId = 728276704;
+
+            $sheetName = $userName;
+
+            /*
+            -------------------------------------------------
+            STEP 1: CHECK SHEET EXISTS
+            -------------------------------------------------
+            */
             $spreadsheet = $service->spreadsheets->get($spreadsheetId);
 
             $exists = false;
 
             foreach ($spreadsheet->getSheets() as $sheet) {
-                if ($sheet->getProperties()->getTitle() === $userName) {
+                if ($sheet->getProperties()->getTitle() === $sheetName) {
                     $exists = true;
                     break;
                 }
             }
 
-            // STEP 2: create sheet if not exists2
+            /*
+            -------------------------------------------------
+            STEP 2: CREATE SHEET FROM MASTER TEMPLATE
+            -------------------------------------------------
+            */
             if (!$exists) {
 
                 $requests = [
                     new \Google_Service_Sheets_Request([
-                        'addSheet' => [
-                            'properties' => [
-                                'title' => $userName
-                            ]
+                        'duplicateSheet' => [
+                            'sourceSheetId' => $masterSheetId,
+                            'newSheetName'  => $sheetName
                         ]
                     ])
                 ];
@@ -777,25 +784,31 @@ class SlackController extends Controller
 
                 $service->spreadsheets->batchUpdate($spreadsheetId, $batchUpdateRequest);
 
-                // header row
-                $header = new \Google_Service_Sheets_ValueRange([
-                    'values' => [['Task', 'Description', 'Remarks', 'Created At']]
-                ]);
-
-                $service->spreadsheets_values->append(
+                $service->spreadsheets_values->update(
                     $spreadsheetId,
-                    $userName . "!A:D",
-                    $header,
+                    $sheetName . "!B1",
+                    new \Google_Service_Sheets_ValueRange([
+                        'values' => [[ $sheetName ]]
+                    ]),
                     ['valueInputOption' => 'RAW']
                 );
+
+                Log::info("Master Sheet duplicated", [
+                    'user' => $sheetName
+                ]);
             }
 
-            // STEP 3: insert task
+            /*
+            -------------------------------------------------
+            STEP 3: INSERT TASK (NO SERIAL)
+            -------------------------------------------------
+            */
+
             $values = [[
-                $task,
-                '',
-                '',
-                $time
+                $time,        // A: Date
+                $task,        // B: Task
+                '',           // C: Description
+                ''            // D: Remarks
             ]];
 
             $body = new \Google_Service_Sheets_ValueRange([
@@ -804,10 +817,15 @@ class SlackController extends Controller
 
             $service->spreadsheets_values->append(
                 $spreadsheetId,
-                $userName . "!A:D",
+                $sheetName . "!A:D",
                 $body,
                 ['valueInputOption' => 'RAW']
             );
+
+            Log::info("Task inserted successfully (no serial)", [
+                'user' => $sheetName,
+                'task' => $task
+            ]);
 
         } catch (\Exception $e) {
 
@@ -816,6 +834,7 @@ class SlackController extends Controller
             ]);
         }
     }
+
 
     private function updateTaskInSheet($userName, $updateText, $time)
     {
@@ -828,6 +847,8 @@ class SlackController extends Controller
             $service = new \Google\Service\Sheets($client);
 
             $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
+
+            $masterSheetId = 728276704;
 
             /*
             ------------------------------------------
@@ -847,17 +868,16 @@ class SlackController extends Controller
 
             /*
             ------------------------------------------
-            STEP 2: CREATE SHEET IF NOT EXISTS
+            STEP 2: CREATE SHEET FROM MASTER
             ------------------------------------------
             */
             if (!$exists) {
 
                 $requests = [
                     new \Google_Service_Sheets_Request([
-                        'addSheet' => [
-                            'properties' => [
-                                'title' => $userName
-                            ]
+                        'duplicateSheet' => [
+                            'sourceSheetId' => $masterSheetId,
+                            'newSheetName'  => $userName
                         ]
                     ])
                 ];
@@ -867,23 +887,11 @@ class SlackController extends Controller
                 ]);
 
                 $service->spreadsheets->batchUpdate($spreadsheetId, $batchUpdateRequest);
-
-                // header row
-                $header = new \Google_Service_Sheets_ValueRange([
-                    'values' => [['Task', 'Description', 'Remarks', 'Created At']]
-                ]);
-
-                $service->spreadsheets_values->append(
-                    $spreadsheetId,
-                    $userName . "!A:D",
-                    $header,
-                    ['valueInputOption' => 'RAW']
-                );
             }
 
             /*
             ------------------------------------------
-            STEP 3: GET SHEET DATA
+            STEP 3: GET DATA (A:D now)
             ------------------------------------------
             */
             $response = $service->spreadsheets_values->get(
@@ -893,73 +901,60 @@ class SlackController extends Controller
 
             $rows = $response->getValues() ?? [];
 
-            /*
-            ------------------------------------------
-            STEP 4: GET LAST ROW
-            ------------------------------------------
-            */
             $lastIndex = count($rows) - 1;
             $lastRow = $rows[$lastIndex] ?? [];
 
-            $lastDescription = $lastRow[1] ?? '';
-
             /*
             ------------------------------------------
-            CASE A: LAST ROW HAS DESCRIPTION → NEW ROW
+            STEP 4: LOGIC (UPDATED STRUCTURE)
             ------------------------------------------
             */
+
+            $lastDescription = $lastRow[2] ?? ''; // Column C = Description
+
             if (!empty($lastDescription)) {
 
+                // ➤ NEW ROW
                 $values = [[
-                    'No Task Assigned',
-                    $updateText,
-                    '',
-                    $time
+                    $time,          // A: Date
+                    '',             // B: Task
+                    $updateText,    // C: Description (USER UPDATE)
+                    ''              // D: Remarks
                 ]];
 
                 $service->spreadsheets_values->append(
                     $spreadsheetId,
                     $userName . "!A:D",
-                    new \Google\Service\Sheets\ValueRange([
+                    new \Google_Service_Sheets_ValueRange([
                         'values' => $values
                     ]),
                     ['valueInputOption' => 'RAW']
                 );
 
-                Log::info("New task row created (previous already updated)", [
-                    'user' => $userName,
-                    'update' => $updateText
-                ]);
-
                 return;
             }
 
-            /*
-            ------------------------------------------
-            CASE B: UPDATE EXISTING ROW
-            ------------------------------------------
-            */
+            // ➤ UPDATE LAST ROW
             $rowIndex = $lastIndex + 1;
 
             $values = [[
-                $lastRow[0] ?? 'No Task',
-                $updateText,
-                $lastRow[2] ?? '',
-                $lastRow[3] ?? ''
+                $lastRow[0] ?? '',   // A: Date
+                $lastRow[1] ?? '',   // B: Task
+                $updateText,         // C: Description
+                $lastRow[3] ?? ''    // D: Remarks
             ]];
 
             $service->spreadsheets_values->update(
                 $spreadsheetId,
                 $userName . "!A{$rowIndex}:D{$rowIndex}",
-                new \Google\Service\Sheets\ValueRange([
+                new \Google_Service_Sheets_ValueRange([
                     'values' => $values
                 ]),
                 ['valueInputOption' => 'RAW']
             );
 
-            Log::info("Task updated successfully", [
-                'user' => $userName,
-                'row' => $rowIndex
+            Log::info("Task updated (no serial version)", [
+                'user' => $userName
             ]);
 
         } catch (\Exception $e) {
