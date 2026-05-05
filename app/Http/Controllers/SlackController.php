@@ -744,7 +744,10 @@ class SlackController extends Controller
 
             $masterSheetId = 728276704;
 
-            $sheetName = $userName;
+            //$sheetName = $userName;
+            $currentMonth = \Carbon\Carbon::parse($time)->format('F_Y');
+            $sheetName = $userName . '_' . $currentMonth;
+
 
             /*
             -------------------------------------------------
@@ -859,8 +862,11 @@ class SlackController extends Controller
 
             $exists = false;
 
+            $currentMonth = \Carbon\Carbon::parse($time)->format('F_Y');
+            $sheetName = $userName . '_' . $currentMonth;
+
             foreach ($spreadsheet->getSheets() as $sheet) {
-                if ($sheet->getProperties()->getTitle() === $userName) {
+                if ($sheet->getProperties()->getTitle() === $sheetName) {
                     $exists = true;
                     break;
                 }
@@ -877,7 +883,7 @@ class SlackController extends Controller
                     new \Google_Service_Sheets_Request([
                         'duplicateSheet' => [
                             'sourceSheetId' => $masterSheetId,
-                            'newSheetName'  => $userName
+                            'newSheetName'  => $sheetName
                         ]
                     ])
                 ];
@@ -896,7 +902,7 @@ class SlackController extends Controller
             */
             $response = $service->spreadsheets_values->get(
                 $spreadsheetId,
-                $userName . "!A:D"
+                $sheetName . "!A:D"
             );
 
             $rows = $response->getValues() ?? [];
@@ -924,7 +930,7 @@ class SlackController extends Controller
 
                 $service->spreadsheets_values->append(
                     $spreadsheetId,
-                    $userName . "!A:D",
+                    $sheetName . "!A:D",
                     new \Google_Service_Sheets_ValueRange([
                         'values' => $values
                     ]),
@@ -946,7 +952,7 @@ class SlackController extends Controller
 
             $service->spreadsheets_values->update(
                 $spreadsheetId,
-                $userName . "!A{$rowIndex}:D{$rowIndex}",
+                $sheetName . "!A{$rowIndex}:D{$rowIndex}",
                 new \Google_Service_Sheets_ValueRange([
                     'values' => $values
                 ]),
@@ -977,7 +983,9 @@ class SlackController extends Controller
 
             $spreadsheetId = "1GRhsV3ypwhtg08_-gsVkXWYee13Gc2PnckRWfTIHDHA";
 
-            $sheetName = $userName;
+//            $sheetName = $userName;
+            $currentMonth = \Carbon\Carbon::parse($time)->format('F_Y');
+            $sheetName = $userName . '_' . $currentMonth;
 
             $response = $service->spreadsheets_values->get(
                 $spreadsheetId,
@@ -997,8 +1005,8 @@ class SlackController extends Controller
                     $values = [[
                         $rows[$i][0] ?? '',
                         $rows[$i][1] ?? '',
+                        $rows[$i][2] ?? '',
                         $remarkText,
-                        $rows[$i][3] ?? ''
                     ]];
 
                     $body = new \Google\Service\Sheets\ValueRange([
